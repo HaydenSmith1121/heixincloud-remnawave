@@ -33,6 +33,7 @@ class LegacyUser:
     status: str
     token: str
     quota_bytes: int
+    balance_cents: int
     expire_at: int
     created_at: int
     admin_note: str
@@ -51,6 +52,7 @@ class MigrationItem:
     vless_uuid: str
     desired_status: str
     traffic_limit_bytes: int
+    balance_cents: int
     expire_at: str
     created_at: str
     description: str
@@ -119,6 +121,19 @@ class RemnawaveApi:
         if not isinstance(user, dict) or "id" not in user:
             raise ApiError("update user response did not contain a user id")
         return user
+
+    def get_user_metadata(self, user_id: int) -> dict[str, Any]:
+        path = f"/api/metadata/user/{user_id}"
+        metadata = unwrap_response(self.request("GET", path))
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("metadata"), dict):
+            raise ApiError(f"get metadata response for user {user_id} was invalid")
+        return dict(metadata["metadata"])
+
+    def upsert_user_metadata(self, user_id: int, metadata: dict[str, Any]) -> None:
+        path = f"/api/metadata/user/{user_id}"
+        self.request("PUT", path, {"metadata": metadata})
 
 
 def unwrap_response(value: Any) -> Any:
@@ -260,7 +275,7 @@ def load_legacy_users(db_path: Path) -> list[LegacyUser]:
 
         rows = conn.execute(
             """
-            select id, email, role, plan_id, status, token, quota_bytes, expire_at,
+                select id, email, role, plan_id, status, token, quota_bytes, balance_cents, expire_at,
                    created_at, admin_note
             from users
             where role = 'user'
@@ -288,6 +303,7 @@ def load_legacy_users(db_path: Path) -> list[LegacyUser]:
                     status=str(row["status"] or "disabled").strip().lower(),
                     token=token,
                     quota_bytes=max(0, int(row["quota_bytes"] or 0)),
+                    balance_cents=max(0, int(row["balance_cents"] or 0)),
                     expire_at=max(0, int(row["expire_at"] or 0)),
                     created_at=max(0, int(row["created_at"] or 0)),
                     admin_note=str(row["admin_note"] or "").strip(),
@@ -334,6 +350,7 @@ def build_plan(
                 now,
             ),
             traffic_limit_bytes=user.quota_bytes,
+            balance_cents=user.balance_cents,
             expire_at=iso_from_timestamp(user.expire_at, permanent_expire),
             created_at=iso_from_timestamp_optional(user.created_at),
             description=(
@@ -366,6 +383,8 @@ def build_plan(
 
         if assigned_squads:
             item.notices.append(f"activeInternalSquads={','.join(assigned_squads)}")
+        if item.balance_cents:
+            item.notices.append(f"balanceCents={item.balance_cents}")
         items.append(item)
 
     if api is None:
@@ -501,6 +520,20 @@ def write_traffic_sql(path: Path, items: list[MigrationItem]) -> None:
         handle.write("END $$;\nCOMMIT;\n")
 
 
+def write_balance_metadata(api: RemnawaveApi, item: MigrationItem) -> None:
+    metadata = api.get_user_metadata(item.panel_id or 0)
+    heixincloud = metadata.get("heixincloud")
+    if not isinstance(heixincloud, dict):
+        heixincloud = {}
+    heixincloud = {
+        **heixincloud,
+        "balanceCents": item.balance_cents,
+        "legacyUserId": item.legacy_id,
+    }
+    metadata["heixincloud"] = heixincloud
+    api.upsert_user_metadata(item.panel_id or 0, metadata)
+
+
 def apply_plan(
     api: RemnawaveApi,
     items: list[MigrationItem],
@@ -530,11 +563,13 @@ def apply_plan(
             action = "updated"
 
         item.panel_id = int(user["id"])
+        write_balance_metadata(api, item)
         state["users"][str(item.legacy_id)] = {
             "username": item.username,
             "shortUuid": item.short_uuid,
             "panelId": item.panel_id,
             "usedTrafficBytes": item.used_traffic_bytes,
+            "balanceCents": item.balance_cents,
         }
         save_state(state_path, state)
         print(f"[{index}/{len(items)}] {action} legacy #{item.legacy_id} -> {item.username}")

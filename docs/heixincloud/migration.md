@@ -14,7 +14,10 @@ title: 旧数据迁移
 - 旧 `users.token`：作为 Remnawave `shortUuid`
 - 旧 `managed_clients.client_uuid`：作为 VLESS UUID
 - 到期时间、流量限额、状态、历史流量
+- 旧 `users.balance_cents`：作为 `user_meta.metadata.heixincloud.balanceCents`
 - 旧套餐到 Internal Squad 的映射
+
+当前余额只保留金额，不迁移充值卡和余额流水。迁移器会合并已有 `user_meta.metadata`，不会覆盖其他扩展数据。
 
 :::caution
 
@@ -190,6 +193,7 @@ docker compose exec remnawave-db \
 - 抽检用户的 `shortUuid` 等于旧 token
 - 抽检用户的 VLESS UUID 与旧配置一致
 - 流量、到期时间、状态正确
+- 抽检 `user_meta.metadata.heixincloud.balanceCents` 与旧 `users.balance_cents` 一致
 - 旧套餐对应的 Internal Squad 正确
 - 历史流量 SQL 已执行
 - `/sub/clash/`、`/sub/singbox/`、`/sub/base64/` 旧路径可用

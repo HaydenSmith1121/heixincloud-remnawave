@@ -12,14 +12,26 @@ import migrate
 
 
 class FakeApi:
-    def __init__(self, users: list[dict[str, object]]) -> None:
+    def __init__(
+        self,
+        users: list[dict[str, object]],
+        metadata: dict[int, dict[str, object]] | None = None,
+    ) -> None:
         self.users = users
+        self.metadata = metadata or {}
+        self.metadata_writes: list[tuple[int, dict[str, object]]] = []
 
     def get_user_by_username(self, username: str) -> dict[str, object] | None:
         return next((user for user in self.users if user["username"] == username), None)
 
     def get_user_by_short_uuid(self, short_uuid: str) -> dict[str, object] | None:
         return next((user for user in self.users if user["shortUuid"] == short_uuid), None)
+
+    def get_user_metadata(self, user_id: int) -> dict[str, object]:
+        return dict(self.metadata.get(user_id, {}))
+
+    def upsert_user_metadata(self, user_id: int, metadata: dict[str, object]) -> None:
+        self.metadata_writes.append((user_id, metadata))
 
 
 class MigrationTests(unittest.TestCase):
@@ -36,6 +48,7 @@ class MigrationTests(unittest.TestCase):
                 status text,
                 token text,
                 quota_bytes integer,
+                balance_cents integer,
                 expire_at integer,
                 created_at integer,
                 admin_note text
@@ -65,12 +78,12 @@ class MigrationTests(unittest.TestCase):
         )
         now = 1_700_000_000
         conn.executemany(
-            "insert into users values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "insert into users values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                (1, "alice@example.com", "user", 10, "active", "token-alice", 1000, now + 3600, now, "vip"),
-                (2, "alice@example.net", "user", 20, "active", "token-bob", 1000, now - 3600, now, ""),
-                (3, "expired@example.com", "user", None, "disabled", "token-expired", 0, 0, 0, ""),
-                (9, "admin@example.com", "admin", None, "active", "admin-token", 0, 0, now, ""),
+                (1, "alice@example.com", "user", 10, "active", "token-alice", 1000, 1234, now + 3600, now, "vip"),
+                (2, "alice@example.net", "user", 20, "active", "token-bob", 1000, 0, now - 3600, now, ""),
+                (3, "expired@example.com", "user", None, "disabled", "token-expired", 0, 0, 0, 0, ""),
+                (9, "admin@example.com", "admin", None, "active", "admin-token", 0, 0, 0, now, ""),
             ],
         )
         conn.executemany(
@@ -102,6 +115,7 @@ class MigrationTests(unittest.TestCase):
         users = migrate.load_legacy_users(self.make_db())
         self.assertEqual([user.legacy_id for user in users], [1, 2, 3])
         self.assertEqual(users[0].used_traffic_bytes, 700)
+        self.assertEqual(users[0].balance_cents, 1234)
         self.assertTrue(users[0].multiple_vless_uuids)
 
         now = 1_700_000_100
@@ -176,6 +190,7 @@ class MigrationTests(unittest.TestCase):
                 vless_uuid=str(uuid.uuid4()),
                 desired_status="ACTIVE",
                 traffic_limit_bytes=1000,
+                balance_cents=1234,
                 expire_at=migrate.DEFAULT_PERMANENT_EXPIRE,
                 created_at="",
                 description="legacy_id=1",
@@ -191,6 +206,7 @@ class MigrationTests(unittest.TestCase):
                 vless_uuid=str(uuid.uuid4()),
                 desired_status="ACTIVE",
                 traffic_limit_bytes=0,
+                balance_cents=0,
                 expire_at=migrate.DEFAULT_PERMANENT_EXPIRE,
                 created_at="",
                 description="legacy_id=2",
@@ -210,6 +226,38 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("%I = 43', id_col)", sql)
         self.assertIn("used_traffic_bytes = 700", sql)
         self.assertNotIn("WHERE t_id =", sql)
+
+    def test_apply_merges_balance_into_user_metadata(self) -> None:
+        users = migrate.load_legacy_users(self.make_db())
+        items = migrate.build_plan(
+            users,
+            permanent_expire=migrate.DEFAULT_PERMANENT_EXPIRE,
+            internal_squads=[],
+            plan_squads={},
+            api=None,
+            now=1_700_000_100,
+        )
+        alice = next(item for item in items if item.legacy_id == 1)
+        alice.panel_id = 42
+        api = FakeApi(
+            [],
+            metadata={42: {"custom": "keep", "heixincloud": {"legacyUserId": 1}}},
+        )
+
+        migrate.write_balance_metadata(api, alice)
+
+        self.assertEqual(
+            api.metadata_writes,
+            [
+                (
+                    42,
+                    {
+                        "custom": "keep",
+                        "heixincloud": {"legacyUserId": 1, "balanceCents": 1234},
+                    },
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":
