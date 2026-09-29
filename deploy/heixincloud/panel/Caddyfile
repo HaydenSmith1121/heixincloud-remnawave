@@ -1,0 +1,18 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PANEL_DOMAIN} {
+	encode zstd gzip
+
+	@legacy_clash path_regexp legacy_clash ^/sub/clash/([^/]+)/?$
+	rewrite @legacy_clash /api/sub/{re.legacy_clash.1}/clash
+
+	@legacy_singbox path_regexp legacy_singbox ^/sub/singbox/([^/]+)/?$
+	rewrite @legacy_singbox /api/sub/{re.legacy_singbox.1}/singbox
+
+	@legacy_base64 path_regexp legacy_base64 ^/sub/base64/([^/]+)/?$
+	rewrite @legacy_base64 /api/sub/{re.legacy_base64.1}
+
+	reverse_proxy remnawave:3000
+}

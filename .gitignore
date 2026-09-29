@@ -162,3 +162,8 @@ yarn-error.log*
 
 samples/
 docker-compose.local.yml
+
+# 黑心云 migration artifacts
+tools/heixin-migrate/__pycache__/
+heixin-migration-state.json
+heixin-traffic-import.sql

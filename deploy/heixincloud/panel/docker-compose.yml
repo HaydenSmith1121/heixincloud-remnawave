@@ -1,0 +1,115 @@
+x-common: &common
+  restart: always
+  networks:
+    - remnawave-network
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 100m
+      max-file: 5
+
+services:
+  remnawave:
+    image: remnawave/backend:3.4.4
+    container_name: remnawave
+    hostname: remnawave
+    env_file: .env
+    <<: [*common, *logging]
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - valkey-socket:/var/run/valkey
+    ports:
+      - '127.0.0.1:${APP_PORT:-3000}:${APP_PORT:-3000}'
+      - '127.0.0.1:${METRICS_PORT:-3001}:${METRICS_PORT:-3001}'
+    depends_on:
+      remnawave-db:
+        condition: service_healthy
+      remnawave-redis:
+        condition: service_healthy
+
+  remnawave-db:
+    image: postgres:18.4
+    container_name: remnawave-db
+    hostname: remnawave-db
+    shm_size: 512mb
+    env_file: .env
+    <<: [*common, *logging]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - TZ=UTC
+    ports:
+      - '127.0.0.1:6767:5432'
+    volumes:
+      - remnawave-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 3s
+      timeout: 10s
+      retries: 3
+
+  remnawave-redis:
+    image: valkey/valkey:9-alpine
+    container_name: remnawave-redis
+    hostname: remnawave-redis
+    <<: [*common, *logging]
+    volumes:
+      - valkey-socket:/var/run/valkey
+    command: >
+      valkey-server
+      --save ""
+      --appendonly no
+      --maxmemory-policy noeviction
+      --loglevel warning
+      --unixsocket /var/run/valkey/valkey.sock
+      --unixsocketperm 777
+      --port 0
+    healthcheck:
+      test: ['CMD', 'valkey-cli', '-s', '/var/run/valkey/valkey.sock', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 3
+
+  caddy:
+    image: caddy:2.9
+    container_name: caddy
+    hostname: caddy
+    <<: [*common, *logging]
+    env_file: .env
+    ports:
+      - '0.0.0.0:80:80'
+      - '0.0.0.0:443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - remnawave
+
+networks:
+  remnawave-network:
+    name: remnawave-network
+    driver: bridge
+    external: false
+
+volumes:
+  remnawave-db-data:
+    name: remnawave-db-data
+    driver: local
+    external: false
+  valkey-socket:
+    name: valkey-socket
+    driver: local
+    external: false
+  caddy-data:
+    name: caddy-data
+    driver: local
+    external: false
+  caddy-config:
+    name: caddy-config
+    driver: local
+    external: false
