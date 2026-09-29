@@ -87,6 +87,10 @@ class MigrationTests(unittest.TestCase):
             (1, 1, first_uuid),
         )
         conn.execute(
+            "insert into managed_clients values (?, ?, ?)",
+            (2, 1, str(uuid.uuid4())),
+        )
+        conn.execute(
             "insert into usage_ledgers values (?, ?, ?)",
             (1, 30, 70),
         )
@@ -98,6 +102,7 @@ class MigrationTests(unittest.TestCase):
         users = migrate.load_legacy_users(self.make_db())
         self.assertEqual([user.legacy_id for user in users], [1, 2, 3])
         self.assertEqual(users[0].used_traffic_bytes, 700)
+        self.assertTrue(users[0].multiple_vless_uuids)
 
         now = 1_700_000_100
         items = migrate.build_plan(
@@ -112,6 +117,9 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(by_id[1].short_uuid, "token-alice")
         self.assertEqual(by_id[1].desired_status, "ACTIVE")
         self.assertEqual(by_id[1].traffic_limit_bytes, 1000)
+        self.assertTrue(
+            any("multiple different VLESS UUIDs" in notice for notice in by_id[1].notices)
+        )
         self.assertNotEqual(by_id[1].username, by_id[2].username)
         self.assertEqual(by_id[2].desired_status, "EXPIRED")
         self.assertEqual(by_id[3].expire_at, migrate.DEFAULT_PERMANENT_EXPIRE)

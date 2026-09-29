@@ -38,6 +38,7 @@ class LegacyUser:
     admin_note: str
     used_traffic_bytes: int
     vless_uuid: str
+    multiple_vless_uuids: bool = False
 
 
 @dataclass
@@ -273,11 +274,12 @@ def load_legacy_users(db_path: Path) -> list[LegacyUser]:
                 continue
             legacy_id = int(row["id"])
             used = static_usage.get(legacy_id, 0) + managed_usage.get(legacy_id, 0)
-            chosen_uuid = None
-            for candidate in client_uuids.get(legacy_id, []):
-                chosen_uuid = normalize_uuid(candidate)
-                if chosen_uuid:
-                    break
+            valid_uuids = [
+                candidate
+                for candidate in (normalize_uuid(value) for value in client_uuids.get(legacy_id, []))
+                if candidate
+            ]
+            chosen_uuid = valid_uuids[0] if valid_uuids else None
             users.append(
                 LegacyUser(
                     legacy_id=legacy_id,
@@ -291,6 +293,7 @@ def load_legacy_users(db_path: Path) -> list[LegacyUser]:
                     admin_note=str(row["admin_note"] or "").strip(),
                     used_traffic_bytes=used,
                     vless_uuid=chosen_uuid or deterministic_uuid(token),
+                    multiple_vless_uuids=len(set(valid_uuids)) > 1,
                 )
             )
         return users
@@ -355,6 +358,11 @@ def build_plan(
             )
             item.vless_uuid = deterministic_uuid(f"{item.short_uuid}:{item.legacy_id}")
         seen_vless_uuids[item.vless_uuid] = item.legacy_id
+        if user.multiple_vless_uuids:
+            item.notices.append(
+                "legacy managed clients contain multiple different VLESS UUIDs; "
+                "Remnawave uses one vlessUuid per user, so clients must refresh the existing subscription"
+            )
 
         if assigned_squads:
             item.notices.append(f"activeInternalSquads={','.join(assigned_squads)}")

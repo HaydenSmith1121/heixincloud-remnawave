@@ -16,6 +16,12 @@ title: 旧数据迁移
 - 到期时间、流量限额、状态、历史流量
 - 旧套餐到 Internal Squad 的映射
 
+:::caution
+
+Remnawave 每个用户只有一个 `vlessUuid`。如果旧库的 `managed_clients` 中，同一个用户在不同节点使用了多个不同 UUID，迁移器会保留最早的一个并输出 `multiple different VLESS UUIDs` 告警。此时必须让客户端刷新原有订阅，或保留旧节点过渡；单靠保留一个 UUID 无法同时匹配全部旧节点配置。
+
+:::
+
 旧订阅路径由 Panel 前面的 Caddy 兼容：
 
 | 旧路径                 | 新路径                     |
